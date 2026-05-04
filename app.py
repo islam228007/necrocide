@@ -20,7 +20,7 @@ CHANNEL_2_ID = -1003859905398  # KultovHesitey
 ADMIN_IDS = [8377328708, 995258854]
 
 REQUIRED_INVITES = 7
-RANDOM_CHANCE = 5  # Шанс 5%
+RANDOM_CHANCE = 5
 
 PHOTO_URL = "https://i.postimg.cc/90Ryk33F/file-000000005fd87243ba6d7497f8878878.png"
 
@@ -39,6 +39,7 @@ class AdminStates(StatesGroup):
     waiting_for_promocode_name = State()
     waiting_for_activations_count = State()
     waiting_for_expiry_days = State()
+    waiting_for_promo_reward = State()
 
 class UserStates(StatesGroup):
     waiting_for_promocode_input = State()
@@ -201,7 +202,19 @@ async def handle_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
-    # Любой подарок - проверка подписки
+    # ПРОМОКОД
+    if callback.data == "gift_promo":
+        await state.set_state(UserStates.waiting_for_promocode_input)
+        await callback.message.delete()
+        await callback.message.answer(
+            "🎟 *Введи промокод:*\n\n"
+            "Просто напиши код в чат",
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+    
+    # Любой подарок (30 звёзд или 3 мишки) - проверка подписки
     await state.update_data(selected_gift=callback.data)
     await callback.message.delete()
     await callback.message.answer(
@@ -356,6 +369,56 @@ async def handle_referrals(callback: CallbackQuery):
             await callback.message.answer(text, parse_mode="Markdown")
         await callback.answer()
 
+# ========== ОБРАБОТКА ВВЕДЕННОГО ПРОМОКОДА ==========
+@dp.message(UserStates.waiting_for_promocode_input)
+async def process_promocode(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    code = message.text.strip().upper()
+    
+    # Проверка - не получал ли уже подарок (включая промокоды)
+    if user_id in used_gifts:
+        await message.answer(
+            f"❌ *Вы уже получили подарок:* {used_gifts[user_id]}\n\n"
+            f"📌 *Один пользователь - один подарок!*",
+            parse_mode="Markdown"
+        )
+        await state.clear()
+        return
+    
+    if code not in promocodes:
+        await message.answer(
+            "❌ *Неверный промокод!*\n\nПопробуй ещё раз или выбери другой подарок.",
+            parse_mode="Markdown"
+        )
+        await state.clear()
+        return
+    
+    promo = promocodes[code]
+    
+    if datetime.now() > promo["expires"]:
+        await message.answer("❌ *Промокод просрочен!*", parse_mode="Markdown")
+        await state.clear()
+        return
+    
+    if promo["remaining"] <= 0:
+        await message.answer("❌ *Промокод уже использован!*", parse_mode="Markdown")
+        await state.clear()
+        return
+    
+    # Активация промокода
+    promocodes[code]["remaining"] -= 1
+    used_promocodes[user_id] = code
+    used_gifts[user_id] = promo["name"]  # Сохраняем название подарка (например "мишка" или "звезды")
+    
+    await message.answer(
+        f"✅ *Промокод активирован!*\n\n"
+        f"🏷 *Вы получили:* {promo['name']}\n\n"
+        f"🎁 *По всем вопросам:* @FuckHesitey",
+        parse_mode="Markdown",
+        reply_markup=main_menu_keyboard()
+    )
+    await state.clear()
+
 # ========== АДМИН: СОЗДАНИЕ ПРОМОКОДА ==========
 @dp.callback_query(lambda c: c.data == "admin_create_promo")
 async def admin_create_promo(callback: CallbackQuery, state: FSMContext):
@@ -363,7 +426,7 @@ async def admin_create_promo(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа!", show_alert=True)
         return
     
-    await callback.message.answer("✏️ *Введи название промокода* (или нажми /cancel для отмены):", parse_mode="Markdown")
+    await callback.message.answer("✏️ *Введи название промокода* (например: Звёзды или Мишка):", parse_mode="Markdown")
     await state.set_state(AdminStates.waiting_for_promocode_name)
     await callback.answer()
 
@@ -375,7 +438,7 @@ async def get_promo_name(message: types.Message, state: FSMContext):
         return
     
     await state.update_data(promo_name=message.text)
-    await message.answer("🔢 *Введи количество активаций* (например: 10):", parse_mode="Markdown")
+    await message.answer("🔢 *Введи количество активаций* (например: 1, 5, 10):", parse_mode="Markdown")
     await state.set_state(AdminStates.waiting_for_activations_count)
 
 @dp.message(AdminStates.waiting_for_activations_count)
@@ -422,7 +485,8 @@ async def get_expiry_days(message: types.Message, state: FSMContext):
                 f"📌 *Код:* `{code}`\n"
                 f"🏷 *Название:* {promo_name}\n"
                 f"🔢 *Активаций:* {activations}\n"
-                f"📅 *Действует до:* {expires.strftime('%d.%m.%Y %H:%M')}")
+                f"📅 *Действует до:* {expires.strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"🎁 *Пользователь получит:* {promo_name}")
         
         await message.answer(text, parse_mode="Markdown", reply_markup=admin_panel_keyboard())
         await state.clear()
@@ -445,61 +509,13 @@ async def admin_list_promo(callback: CallbackQuery):
     text = "*📋 Список промокодов:*\n\n"
     for code, data in promocodes.items():
         text += (f"🔹 `{code}`\n"
-                 f"   Название: {data['name']}\n"
+                 f"   Подарок: {data['name']}\n"
                  f"   Осталось: {data['remaining']}/{data['activations']}\n"
                  f"   До: {data['expires'].strftime('%d.%m.%Y')}\n\n")
     
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=admin_panel_keyboard())
     await callback.answer()
-
-# ========== ПРОМОКОД ДЛЯ ПОЛЬЗОВАТЕЛЯ ==========
-@dp.callback_query(lambda c: c.data == "gift_promo")
-async def promo_input_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("🎟 *Введи промокод:*", parse_mode="Markdown")
-    await state.set_state(UserStates.waiting_for_promocode_input)
-    await callback.answer()
-
-@dp.message(UserStates.waiting_for_promocode_input)
-async def check_promocode(message: types.Message, state: FSMContext):
-    code = message.text.strip().upper()
-    user_id = message.from_user.id
-    
-    if code not in promocodes:
-        await message.answer("❌ *Неверный промокод!*", parse_mode="Markdown")
-        await state.clear()
-        return
-    
-    promo = promocodes[code]
-    
-    if datetime.now() > promo["expires"]:
-        await message.answer("❌ *Промокод просрочен!*", parse_mode="Markdown")
-        await state.clear()
-        return
-    
-    if promo["remaining"] <= 0:
-        await message.answer("❌ *Промокод уже использован!*", parse_mode="Markdown")
-        await state.clear()
-        return
-    
-    if user_id in used_promocodes and code in used_promocodes[user_id]:
-        await message.answer("❌ *Ты уже использовал этот промокод!*", parse_mode="Markdown")
-        await state.clear()
-        return
-    
-    promocodes[code]["remaining"] -= 1
-    if user_id not in used_promocodes:
-        used_promocodes[user_id] = []
-    used_promocodes[user_id].append(code)
-    
-    await message.answer(
-        f"✅ *Промокод активирован!*\n\n"
-        f"🏷 *{promo['name']}*\n\n"
-        f"🎁 *За подарком обращаться:* @FuckHesitey",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard()
-    )
-    await state.clear()
 
 # ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
 async def health_check(request):
