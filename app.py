@@ -40,8 +40,10 @@ CHANNEL_1_ID   = -1003993803454
 CHANNEL_2_ID   = -1003859905398
 CHANNEL_1_LINK = "https://t.me/+_W1Hit0AXMExMzVi"
 CHANNEL_2_LINK = "https://t.me/KultovHesitey"
+CHANNEL_3_LINK = "https://t.me/LifeXaltov"
 CHANNEL_1_NAME = "🖤 NECROCIDE"
 CHANNEL_2_NAME = "⚡️ ПЕРЕХОДНИК HESITEY"
+CHANNEL_3_NAME = "💖 ПЕРЕХОДНИК XALTOV"
 
 ADMIN_IDS        = [8377328708, 995258854]
 REQUIRED_INVITES = 7
